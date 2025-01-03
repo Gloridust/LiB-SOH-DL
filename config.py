@@ -7,22 +7,39 @@ class Config:
     
     # 模型参数
     NUM_MODELS = 5  # 集成模型数量
-    BATCH_SIZE = 32
-    LEARNING_RATE = 0.001
+    BATCH_SIZE = 16  # 减小批次大小
+    LEARNING_RATE = 0.0001  # 降低学习率
     NUM_EPOCHS = 2000
     MIN_EPOCHS = 500
     
     # 训练参数
     DOMAIN_LOSS_WEIGHT = 0.1
-    VALIDATION_SPLIT = 0.33
+    VALIDATION_SPLIT = 0.2
     EARLY_STOPPING_THRESHOLD = 0.05
-    PATIENCE = 10  # 早停耐心值
+    PATIENCE = 20  # 增加早停耐心值
+    
+    # 优化器参数
+    WEIGHT_DECAY = 1e-4  # L2正则化
+    BETA1 = 0.9
+    BETA2 = 0.999
     
     # 模型选择参数
     MODEL_SELECTION_THRESHOLD = 0.05
     
     # 设备配置
-    DEVICE = 'cuda'  # 或 'cpu'
+    @staticmethod
+    def get_device():
+        """获取可用的计算设备，按照 CUDA > MPS > CPU 的优先级"""
+        import torch
+        
+        if torch.cuda.is_available():
+            return 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return 'mps'
+        else:
+            return 'cpu'
+    
+    DEVICE = get_device.__func__()  # 静态方法调用
     
     # 数据增强参数
     NOISE_LEVEL = 0.01 

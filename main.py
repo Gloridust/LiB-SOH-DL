@@ -13,19 +13,71 @@ class BatterySOHEstimator(nn.Module):
     def __init__(self, input_size):
         super(BatterySOHEstimator, self).__init__()
         
+        self.input_size = input_size
+        
+        # 打印输入大小
+        print(f"初始化网络，输入大小: {input_size}")
+        
+        # 计算每层卷积后的特征大小
+        def calc_conv_output_size(input_size, kernel_size=3, stride=1, padding=1):
+            return (input_size + 2 * padding - kernel_size) // stride + 1
+            
+        def calc_pool_output_size(input_size, kernel_size=2, stride=2):
+            return input_size // stride
+        
+        # 第一层卷积+池化后的大小
+        conv1_size = calc_conv_output_size(input_size)
+        pool1_size = calc_pool_output_size(conv1_size)
+        
+        # 第二层卷积+池化后的大小
+        conv2_size = calc_conv_output_size(pool1_size)
+        pool2_size = calc_pool_output_size(conv2_size)
+        
+        # 第三层卷积后的大小
+        conv3_size = calc_conv_output_size(pool2_size)
+        
+        print(f"网络结构大小:")
+        print(f"输入 -> {input_size}")
+        print(f"Conv1 -> {conv1_size} -> Pool1 -> {pool1_size}")
+        print(f"Conv2 -> {conv2_size} -> Pool2 -> {pool2_size}")
+        print(f"Conv3 -> {conv3_size}")
+        
         # 1D CNN特征提取器
         self.feature_extractor = nn.Sequential(
+            # 第一层: 卷积 + 池化
             nn.Conv1d(1, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool1d(2),
+            nn.MaxPool1d(kernel_size=2, stride=2, padding=1),  # 添加padding防止大小为0
+            
+            # 第二层: 卷积 + 池化
             nn.Conv1d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool1d(2)
+            nn.MaxPool1d(kernel_size=2, stride=2, padding=1),  # 添加padding防止大小为0
+            
+            # 第三层: 卷积
+            nn.Conv1d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU()
         )
+        
+        # 计算展平后的特征维度
+        with torch.no_grad():
+            # 创建一个批次的测试输入
+            x = torch.randn(2, 1, self.input_size)
+            # 通过特征提取器
+            x = self.feature_extractor(x)
+            # 计算特征大小
+            self.feature_size = x.view(x.size(0), -1).size(1)
+            print(f"展平后的特征大小: {self.feature_size}")
         
         # 中间全连接层 (MFC)
         self.mfc = nn.Sequential(
-            nn.Linear(32 * (input_size // 4), 128),
+            nn.Linear(self.feature_size, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.Dropout(0.5)
         )
@@ -33,28 +85,43 @@ class BatterySOHEstimator(nn.Module):
         # 终端全连接层 (TFC)
         self.tfc = nn.Sequential(
             nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(64, 1),
             nn.Sigmoid()
         )
-        
+    
     def forward(self, x, extract_features=False):
-        # 重塑输入以适应1D CNN
-        x = x.unsqueeze(1)  # [batch_size, 1, sequence_length]
-        
-        # 特征提取
-        features = self.feature_extractor(x)
-        features = features.view(features.size(0), -1)
-        
-        # MFC层
-        mfc_output = self.mfc(features)
-        
-        if extract_features:
-            return mfc_output
+        try:
+            # 确保输入维度正确
+            if len(x.shape) == 2:
+                x = x.unsqueeze(1)  # [batch_size, 1, sequence_length]
             
-        # TFC层
-        soh_pred = self.tfc(mfc_output)
-        return soh_pred
+            # 打印输入形状（调试用）
+            # print(f"Input shape: {x.shape}")
+            
+            # 特征提取
+            features = self.feature_extractor(x)
+            # print(f"After feature extractor: {features.shape}")
+            
+            features = features.view(features.size(0), -1)
+            # print(f"After flatten: {features.shape}")
+            
+            # MFC层
+            mfc_output = self.mfc(features)
+            
+            if extract_features:
+                return mfc_output
+                
+            # TFC层
+            soh_pred = self.tfc(mfc_output)
+            return soh_pred
+            
+        except Exception as e:
+            print(f"前向传播错误: {str(e)}")
+            print(f"输入张量形状: {x.shape}")
+            raise
 
 # MMD损失函数
 def mmd_loss(source_features, target_features):
@@ -143,8 +210,12 @@ class EnsembleDNNs:
         """
         self.models = [BatterySOHEstimator(input_size) for _ in range(num_models)]
         self.optimizers = [
-            optim.Adam(model.parameters(), lr=0.001) 
-            for model in self.models
+            optim.Adam(
+                model.parameters(), 
+                lr=Config.LEARNING_RATE,
+                betas=(Config.BETA1, Config.BETA2),
+                weight_decay=Config.WEIGHT_DECAY
+            ) for model in self.models
         ]
         
     def train_all(self, source_loader, target_loader, num_epochs=2000):

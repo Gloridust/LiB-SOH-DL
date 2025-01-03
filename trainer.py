@@ -9,13 +9,30 @@ import matplotlib.pyplot as plt
 class Trainer:
     def __init__(self, config, model_dir="models"):
         self.config = config
-        self.device = torch.device(config.DEVICE)
+        self.device = self._setup_device()
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(exist_ok=True)
         
         # 设置日志
         self._setup_logging()
         
+    def _setup_device(self):
+        """设置并返回计算设备"""
+        device = torch.device(self.config.DEVICE)
+        print(f"使用设备: {device}")
+        
+        # 如果使用CUDA，打印GPU信息
+        if device.type == 'cuda':
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+            print(f"可用GPU数量: {torch.cuda.device_count()}")
+        # 如果使用MPS，打印相关信息
+        elif device.type == 'mps':
+            print("使用Apple Silicon GPU (MPS)")
+        else:
+            print("使用CPU")
+            
+        return device
+    
     def _setup_logging(self):
         """设置日志记录"""
         log_file = self.model_dir / f"training_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -31,65 +48,76 @@ class Trainer:
         
     def train_model(self, model, source_loader, target_loader, optimizer):
         """训练单个模型"""
-        model = model.to(self.device)
-        best_loss = float('inf')
-        patience = self.config.PATIENCE
-        patience_counter = 0
-        
-        train_losses = []
-        val_losses = []
-        
-        for epoch in range(self.config.NUM_EPOCHS):
-            model.train()
-            total_loss = 0
+        try:
+            model = model.to(self.device)
+            best_loss = float('inf')
+            patience = self.config.PATIENCE
+            patience_counter = 0
             
-            for (source_data, source_labels), target_data in zip(source_loader, target_loader):
-                source_data = source_data.to(self.device)
-                source_labels = source_labels.to(self.device)
-                target_data = target_data.to(self.device)
-                
-                optimizer.zero_grad()
-                
-                # 源域预测
-                source_features = model(source_data, extract_features=True)
-                source_pred = model(source_data)
-                
-                # 目标域预测
-                target_features = model(target_data, extract_features=True)
-                
-                # 计算损失
-                soh_loss = torch.nn.MSELoss()(source_pred, source_labels)
-                domain_loss = self._mmd_loss(source_features, target_features)
-                
-                loss = soh_loss + self.config.DOMAIN_LOSS_WEIGHT * domain_loss
-                
-                loss.backward()
-                optimizer.step()
-                
-                total_loss += loss.item()
+            train_losses = []
+            val_losses = []
             
-            # 验证
-            val_loss = self._validate(model, source_loader)
-            train_losses.append(total_loss)
-            val_losses.append(val_loss)
-            
-            # 早停检查
-            if val_loss < best_loss:
-                best_loss = val_loss
-                patience_counter = 0
-                self._save_model(model, epoch, val_loss)
-            else:
-                patience_counter += 1
+            for epoch in range(self.config.NUM_EPOCHS):
+                model.train()
+                total_loss = 0
                 
-            if patience_counter >= patience and epoch >= self.config.MIN_EPOCHS:
-                self.logger.info(f"Early stopping at epoch {epoch}")
-                break
-            
-            if (epoch + 1) % 100 == 0:
-                self.logger.info(f'Epoch [{epoch+1}/{self.config.NUM_EPOCHS}], '
-                               f'Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}')
+                for (source_data, source_labels), target_data in zip(source_loader, target_loader):
+                    try:
+                        # 将数据移动到正确的设备上
+                        source_data = source_data.to(self.device)
+                        source_labels = source_labels.to(self.device)
+                        target_data = target_data.to(self.device)
+                        
+                        optimizer.zero_grad()
+                        
+                        # 源域预测
+                        source_features = model(source_data, extract_features=True)
+                        source_pred = model(source_data)
+                        
+                        # 目标域预测
+                        target_features = model(target_data, extract_features=True)
+                        
+                        # 计算损失
+                        soh_loss = torch.nn.MSELoss()(source_pred, source_labels)
+                        domain_loss = self._mmd_loss(source_features, target_features)
+                        
+                        loss = soh_loss + self.config.DOMAIN_LOSS_WEIGHT * domain_loss
+                        
+                        loss.backward()
+                        optimizer.step()
+                        
+                        total_loss += loss.item()
+                        
+                    except Exception as e:
+                        self.logger.error(f"训练批次时出错: {str(e)}")
+                        continue
                 
-        return train_losses, val_losses
+                # 验证
+                val_loss = self._validate(model, source_loader)
+                train_losses.append(total_loss)
+                val_losses.append(val_loss)
+                
+                # 早停检查
+                if val_loss < best_loss:
+                    best_loss = val_loss
+                    patience_counter = 0
+                    self._save_model(model, epoch, val_loss)
+                else:
+                    patience_counter += 1
+                    
+                if patience_counter >= patience and epoch >= self.config.MIN_EPOCHS:
+                    self.logger.info(f"Early stopping at epoch {epoch}")
+                    break
+                
+                if (epoch + 1) % 100 == 0:
+                    self.logger.info(f'Epoch [{epoch+1}/{self.config.NUM_EPOCHS}], '
+                                   f'Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}')
+                    
+            return train_losses, val_losses
+            
+        except Exception as e:
+            self.logger.error(f"训练过程出错: {str(e)}")
+            raise
     
     def _validate(self, model, loader):
         """验证模型"""

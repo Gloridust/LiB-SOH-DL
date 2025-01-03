@@ -233,6 +233,28 @@ class BatteryDataLoader:
         
         return source_loader, target_loader
 
+    def calculate_soh(self, capacities):
+        """计算SOH"""
+        try:
+            initial_capacity = capacities[0]  # 首次循环容量
+            if initial_capacity == 0:
+                print("警告: 初始容量为0")
+                return np.zeros_like(capacities)
+            
+            soh = capacities / initial_capacity
+            
+            # 检查无效值
+            if np.any(np.isnan(soh)) or np.any(np.isinf(soh)):
+                print("警告: SOH计算中出现无效值")
+                # 替换无效值为0
+                soh = np.nan_to_num(soh, 0)
+            
+            return soh
+            
+        except Exception as e:
+            print(f"SOH计算错误: {str(e)}")
+            return np.zeros_like(capacities)
+
 class BatteryDataset(Dataset):
     def __init__(self, voltage_curves, soh_labels=None, is_source=True):
         """
