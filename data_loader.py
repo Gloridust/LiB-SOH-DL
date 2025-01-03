@@ -19,7 +19,12 @@ class BatteryDataLoader:
                 engine='openpyxl'
             )
             
-            # 获取电压列名（从3.0V到3.18V）
+            # 检查数据是否有缺失值
+            if df.isnull().values.any():
+                print("警告: 数据中存在缺失值，将被填充为0")
+                df.fillna(0, inplace=True)
+            
+            # 获取电压列名（从3.0V到4.2V）
             voltage_columns = [col for col in df.columns if 'V' in str(col)]
             if not voltage_columns:
                 raise ValueError("未找到电压列")
@@ -30,7 +35,7 @@ class BatteryDataLoader:
             for col in voltage_columns:
                 try:
                     v = float(col.replace('V', '').strip())
-                    if 3.0 <= v <= 4.2:
+                    if self.config.MIN_VOLTAGE <= v <= self.config.MAX_VOLTAGE:
                         voltage_values.append(v)
                         filtered_columns.append(col)
                 except ValueError:
@@ -60,6 +65,9 @@ class BatteryDataLoader:
                     
                     # 网格化处理
                     gridded_curve = self._grid_data(voltage_values, capacity_curve)
+                    if gridded_curve is None:
+                        print(f"警告: 第 {idx+1} 行网格化处理失败，跳过")
+                        continue
                     # 归一化处理
                     normalized_curve = self._normalize_curve(gridded_curve)
                     samples.append(normalized_curve)
@@ -85,7 +93,7 @@ class BatteryDataLoader:
             capacity = np.array(capacity, dtype=np.float32)
             
             # 过滤掉异常电压值
-            valid_mask = (voltage >= 3.0) & (voltage <= 4.2)
+            valid_mask = (voltage >= self.config.MIN_VOLTAGE) & (voltage <= self.config.MAX_VOLTAGE)
             if not np.any(valid_mask):
                 raise ValueError("没有有效的电压值")
             
@@ -103,21 +111,21 @@ class BatteryDataLoader:
                 capacity, 
                 kind='linear',
                 bounds_error=False,  # 超出范围时返回nan而不是报错
-                fill_value=np.nan    # 超出范围的值填充为nan
+                fill_value=0.0    # 超出范围的值填充为0
             )
             
-            # 根据论文，使用10mV的电压间隔进行网格化
-            voltage_window = self.config.VOLTAGE_WINDOW  # 500mV
-            voltage_interval = self.config.VOLTAGE_INTERVAL  # 10mV
+            # 根据论文，使用配置中的电压窗口和间隔进行网格化
+            voltage_window = self.config.VOLTAGE_WINDOW  # mV
+            voltage_interval = self.config.VOLTAGE_INTERVAL  # mV
             
             # 创建网格点，确保在有效范围内
-            start_v = max(3.0, min(voltage))
-            end_v = min(4.2, start_v + voltage_window)
+            start_v = self.config.MIN_VOLTAGE
+            end_v = self.config.MAX_VOLTAGE
             
             grid_points = np.arange(
                 start_v,
-                end_v,
-                voltage_interval,
+                end_v + voltage_interval / 1000, # 加上一个小的偏移量以包含终点
+                voltage_interval / 1000, # 转换为V
                 dtype=np.float32
             )
             
@@ -126,13 +134,14 @@ class BatteryDataLoader:
             
             # 检查插值结果是否有效
             if np.any(np.isnan(gridded_capacity)):
-                raise ValueError("插值结果包含无效值")
+                print("警告: 插值结果包含无效值")
+                return None
             
             return gridded_capacity
             
         except Exception as e:
             print(f"网格化处理出错: {str(e)}")
-            raise
+            return None
     
     def _normalize_curve(self, capacity_curve):
         """归一化充电曲线"""
@@ -142,8 +151,8 @@ class BatteryDataLoader:
             
             # 按最大容量进行归一化
             max_capacity = np.max(capacity_curve)
-            if max_capacity == 0:
-                return capacity_curve
+            if max_capacity <= 0:
+                return np.zeros_like(capacity_curve)
             return capacity_curve / max_capacity
             
         except Exception as e:
@@ -179,8 +188,11 @@ class BatteryDataLoader:
         SOH = 当前容量 / 初始容量
         """
         # 使用每个样本的最大容量
-        capacities = np.max(data, axis=1)
+        capacities = np.array([np.max(sample) for sample in data])
         initial_capacity = capacities[0]  # 使用第一个循环的容量作为初始容量
+        if initial_capacity <= 0:
+            print("警告: 初始容量为非正数，无法计算SOH")
+            return np.zeros_like(capacities)
         soh = capacities / initial_capacity
         return soh
     
@@ -222,13 +234,15 @@ class BatteryDataLoader:
         source_loader = DataLoader(
             source_dataset,
             batch_size=self.config.BATCH_SIZE,
-            shuffle=True
+            shuffle=True,
+            drop_last=True # 防止最后一个batchsize小于设定值
         )
         
         target_loader = DataLoader(
             target_dataset,
             batch_size=self.config.BATCH_SIZE,
-            shuffle=True
+            shuffle=True,
+            drop_last=True # 防止最后一个batchsize小于设定值
         )
         
         return source_loader, target_loader
@@ -237,8 +251,8 @@ class BatteryDataLoader:
         """计算SOH"""
         try:
             initial_capacity = capacities[0]  # 首次循环容量
-            if initial_capacity == 0:
-                print("警告: 初始容量为0")
+            if initial_capacity <= 0:
+                print("警告: 初始容量为0或负数")
                 return np.zeros_like(capacities)
             
             soh = capacities / initial_capacity
@@ -263,7 +277,7 @@ class BatteryDataset(Dataset):
             soh_labels: SOH标签 (仅源域需要)
             is_source: 是否为源域数据
         """
-        self.voltage_curves = torch.FloatTensor(voltage_curves)
+        self.voltage_curves = torch.FloatTensor(voltage_curves).unsqueeze(1) # 添加一个通道维度
         self.soh_labels = torch.FloatTensor(soh_labels).unsqueeze(1) if soh_labels is not None else None
         self.is_source = is_source
         

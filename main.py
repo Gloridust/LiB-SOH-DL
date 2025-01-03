@@ -22,8 +22,8 @@ class BatterySOHEstimator(nn.Module):
         def calc_conv_output_size(input_size, kernel_size=3, stride=1, padding=1):
             return (input_size + 2 * padding - kernel_size) // stride + 1
             
-        def calc_pool_output_size(input_size, kernel_size=2, stride=2):
-            return input_size // stride
+        def calc_pool_output_size(input_size, kernel_size=2, stride=2, padding=0):
+            return (input_size + 2 * padding - (kernel_size - 1) - 1) // stride  + 1
         
         # 第一层卷积+池化后的大小
         conv1_size = calc_conv_output_size(input_size)
@@ -47,17 +47,20 @@ class BatterySOHEstimator(nn.Module):
             # 第一层: 卷积 + 池化
             nn.Conv1d(1, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2, stride=2, padding=1),  # 添加padding防止大小为0
+            nn.MaxPool1d(kernel_size=2, stride=2),
             
             # 第二层: 卷积 + 池化
             nn.Conv1d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2, stride=2, padding=1),  # 添加padding防止大小为0
+            nn.MaxPool1d(kernel_size=2, stride=2),
             
             # 第三层: 卷积
             nn.Conv1d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU()
         )
+        
+        # 初始化权重
+        self._initialize_weights()
         
         # 计算展平后的特征维度
         with torch.no_grad():
@@ -91,6 +94,13 @@ class BatterySOHEstimator(nn.Module):
             nn.Linear(64, 1),
             nn.Sigmoid()
         )
+    
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
     
     def forward(self, x, extract_features=False):
         try:
@@ -158,7 +168,7 @@ def train_model(source_loader, target_loader, model, optimizer, num_epochs=2000)
             domain_loss = mmd_loss(source_features, target_features)
             
             # 总损失
-            loss = soh_loss + 0.1 * domain_loss
+            loss = soh_loss + Config.DOMAIN_LOSS_WEIGHT * domain_loss
             
             # 反向传播
             loss.backward()
@@ -307,7 +317,7 @@ def main():
     source_loader, target_loader = data_loader.create_data_loaders(data_dict)
     
     # 获取输入特征大小
-    input_size = next(iter(source_loader))[0].shape[1]
+    input_size = next(iter(source_loader))[0].shape[-1] # 从数据加载器中获取正确的输入大小
     
     # 创建模型集成
     ensemble = EnsembleDNNs(input_size, num_models=config.NUM_MODELS)

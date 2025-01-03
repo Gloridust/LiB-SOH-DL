@@ -70,20 +70,16 @@ class Trainer:
                         
                         optimizer.zero_grad()
                         
-                        # 源域预测
-                        source_features = model(source_data, extract_features=True)
+                        # 前向传播
                         source_pred = model(source_data)
+                        loss = torch.nn.MSELoss()(source_pred, source_labels)
                         
-                        # 目标域预测
-                        target_features = model(target_data, extract_features=True)
-                        
-                        # 计算损失
-                        soh_loss = torch.nn.MSELoss()(source_pred, source_labels)
-                        domain_loss = self._mmd_loss(source_features, target_features)
-                        
-                        loss = soh_loss + self.config.DOMAIN_LOSS_WEIGHT * domain_loss
-                        
+                        # 反向传播
                         loss.backward()
+                        
+                        # 添加梯度裁剪
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        
                         optimizer.step()
                         
                         total_loss += loss.item()
