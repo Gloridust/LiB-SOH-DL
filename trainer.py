@@ -224,52 +224,61 @@ class Trainer:
         targets = []
         
         with torch.no_grad():
-            for batch in test_loader:
+            for batch_idx, batch in enumerate(test_loader):
                 try:
-                    target = None  # 初始化target变量
-                    # 处理不同的数据格式
-                    if isinstance(batch, tuple) and len(batch) == 2:
-                        data, target = batch
+                    # 先解析 batch
+                    if isinstance(batch, (tuple, list)):
+                        if len(batch) == 2:
+                            data_raw, target_raw = batch
+                        else:
+                            # 只有 data，没有 target
+                            data_raw = batch[0] if isinstance(batch[0], (np.ndarray, list, torch.Tensor)) else batch
+                            target_raw = None
                     else:
-                        data = batch
-                        if isinstance(data, tuple):
-                            data = data[0]
+                        data_raw = batch
+                        target_raw = None
                     
-                    # 确保数据是张量
-                    if isinstance(data, list):
-                        data = torch.tensor(data, dtype=torch.float32)
-                    if target is not None and isinstance(target, list):
-                        target = torch.tensor(target, dtype=torch.float32)
+                    # 使用辅助函数转换 data
+                    data_t = to_tensor_safely(data_raw, self.device)
+                    if data_t is None:
+                        self.logger.error(f"[eval] Batch {batch_idx} 数据转换失败，跳过。类型: {type(data_raw)}")
+                        continue
                     
-                    # 移动到设备并确保数据类型
-                    data = data.to(self.device)
-                    if target is not None:
-                        target = target.to(self.device)
+                    # 如果存在 target_raw，则同理进行转换
+                    if target_raw is not None:
+                        target_t = to_tensor_safely(target_raw, self.device)
+                        if target_t is None:
+                            self.logger.error(f"[eval] Batch {batch_idx} 标签转换失败，跳过。")
+                            continue
+                    else:
+                        target_t = None
                     
-                    # 预测
-                    pred = model(data)
+                    # 进行推断
+                    pred = model(data_t)
+                    
+                    # 收集预测值
                     predictions.extend(pred.cpu().numpy())
                     
-                    # 如果有目标值，添加到targets
-                    if target is not None:
-                        targets.extend(target.cpu().numpy())
+                    # 如果有标签，则收集
+                    if target_t is not None:
+                        targets.extend(target_t.cpu().numpy())
                         
                 except Exception as e:
-                    self.logger.error(f"评估时出错: {str(e)}")
-                    self.logger.error(f"数据类型: {type(data)}")
-                    self.logger.error(f"数据形状: {data.shape if hasattr(data, 'shape') else 'N/A'}")
+                    self.logger.error(f"[eval] 第 {batch_idx} 个 batch 出错：{e}")
+                    # 对 data_raw 进行更多 debug
+                    self.logger.error(f"  data_raw 类型: {type(data_raw)}")
+                    # data_raw 如果是 list, 可以再 print(len(data_raw)) 之类
                     continue
         
-        # 如果没有收集到targets（目标域评估），返回None
-        if not targets:
+        # 如果没有收集到任何 target，则说明在目标域(无标签)，返回 None
+        if len(targets) == 0:
             return None
         
-        # 转换为numpy数组并计算指标
+        # 转换为 numpy 数组并计算指标
         try:
             predictions = np.array(predictions)
             targets = np.array(targets)
             
-            # 计算评估指标
             mse = np.mean((predictions - targets) ** 2)
             mae = np.mean(np.abs(predictions - targets))
             rmse = np.sqrt(mse)
@@ -281,4 +290,32 @@ class Trainer:
             }
         except Exception as e:
             self.logger.error(f"计算评估指标时出错: {str(e)}")
-            return None 
+            return None
+
+def to_tensor_safely(data, device):
+    """
+    将 data 安全地转换成 (batch_size, 1, length) 的 torch.Tensor 并放到指定 device。
+    如果转换过程中出现任何异常，则返回 None。
+    """
+    try:
+        # 如果已经是 np.ndarray，则直接用；否则先转为 np.array
+        if not isinstance(data, np.ndarray):
+            data = np.array(data, dtype=np.float32)
+        
+        # 如果是一维数据 (length, )，则视为 batch_size=1，channels=1
+        if data.ndim == 1:
+            data = data[None, None, :]  # (1, 1, length)
+        elif data.ndim == 2:
+            # 大多数情况下可能是 (batch_size, length)；再加一个通道维度
+            data = data[:, None, :]     # (batch_size, 1, length)
+        elif data.ndim == 3:
+            # 假设是 (batch, channel, length)；若 channel != 1 看你需求
+            pass
+        else:
+            # 其他维度暂不支持
+            return None
+        
+        tensor_data = torch.tensor(data, dtype=torch.float32, device=device)
+        return tensor_data
+    except Exception:
+        return None 
