@@ -132,7 +132,6 @@ class BatterySOHEstimator(nn.Module):
         self.eval()  # 设置为评估模式
         with torch.no_grad():
             if data is not None:
-                # 如果提供了数据，使用提供的数据进行预测
                 if not isinstance(data, torch.Tensor):
                     data = torch.tensor(data, dtype=torch.float32)
                 if len(data.shape) == 2:
@@ -141,7 +140,6 @@ class BatterySOHEstimator(nn.Module):
                 return self(data).cpu().numpy()
             else:
                 # 如果没有提供数据，返回一个示例预测
-                # 这里仅用于可视化目的
                 x = torch.randn(1, 1, self.input_size, device=self.device)
                 return self(x).cpu().numpy()
 

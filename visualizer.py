@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from pathlib import Path
+import torch
 
 class Visualizer:
     def __init__(self, save_dir="visualizations"):
@@ -10,63 +11,17 @@ class Visualizer:
         
     def plot_ensemble_analysis(self, models, input_size, save_name="ensemble_analysis.png"):
         """绘制集成模型分析图，类似论文中的图"""
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
         
-        # 图 (a): 集成规模分析
-        self._plot_ensemble_size_analysis(ax1, models)
+        # 图 (a): 激活函数分析
+        self._plot_activation_analysis(ax1)
         
-        # 图 (b): 激活函数分析
-        self._plot_activation_analysis(ax2)
-        
-        # 图 (c): 网络结构分析
-        self._plot_architecture_analysis(ax3)
+        # 图 (b): 网络结构分析
+        self._plot_architecture_analysis(ax2)
         
         plt.tight_layout()
         plt.savefig(self.save_dir / save_name, dpi=300, bbox_inches='tight')
         plt.close()
-        
-    def _plot_ensemble_size_analysis(self, ax, models):
-        """绘制集成规模与MAE的关系"""
-        sizes = [1, 50, 100, 150, 200, 250, 300]
-        mae_means = []
-        mae_stds = []
-        
-        for size in sizes:
-            # 随机选择指定数量的模型
-            selected_models = np.random.choice(models, min(size, len(models)), replace=True)
-            predictions = []
-            
-            # 收集每个模型的预测结果
-            for model in selected_models:
-                try:
-                    pred = model.predict()  # 使用新添加的predict方法
-                    predictions.append(pred)
-                except Exception as e:
-                    print(f"模型预测出错: {str(e)}")
-                    continue
-            
-            if not predictions:
-                continue
-            
-            # 计算MAE及其标准差
-            predictions = np.array(predictions).squeeze()
-            mae = np.mean(np.abs(predictions - 0.5))  # 使用0.5作为基准值
-            std = np.std(np.abs(predictions - 0.5))
-            
-            mae_means.append(mae)
-            mae_stds.append(std)
-        
-        if mae_means:
-            ax.fill_between(sizes[:len(mae_means)], 
-                            np.array(mae_means) - np.array(mae_stds),
-                            np.array(mae_means) + np.array(mae_stds),
-                            alpha=0.2, color='red')
-            ax.plot(sizes[:len(mae_means)], mae_means, 'k-', label='MAE')
-            ax.set_xlabel('Size of DNN swarm')
-            ax.set_ylabel('Absolute error')
-            ax.set_ylim(0, 0.5)
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x*100)}%'))
-            ax.legend()
         
     def _plot_activation_analysis(self, ax):
         """绘制不同激活函数的性能比较"""
@@ -87,7 +42,7 @@ class Visualizer:
         ax.set_xticklabels(activations)
         ax.set_xlabel('Activation function')
         ax.set_ylabel('Absolute error')
-        ax.set_ylim(0, 0.5)
+        ax.set_ylim(0, 0.8)  # 调整 Y 轴范围到 80%
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x*100)}%'))
         
     def _plot_architecture_analysis(self, ax):
@@ -120,10 +75,10 @@ class Visualizer:
         plt.figure(figsize=(10, 6))
         
         # 绘制真实值和预测值
-        plt.scatter(range(len(true_soh)), true_soh, 
-                   label='True SOH', alpha=0.6, color='blue')
-        plt.scatter(range(len(pred_soh)), pred_soh, 
-                   label='Predicted SOH', alpha=0.6, color='red')
+        plt.plot(range(len(true_soh)), true_soh, 
+                 label='True SOH', color='blue', linewidth=2)
+        plt.plot(range(len(pred_soh)), pred_soh, 
+                 label='Predicted SOH', color='red', linestyle='--', linewidth=2)
         
         # 添加图例和标签
         plt.xlabel('Cycle Number')
