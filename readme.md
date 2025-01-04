@@ -12,7 +12,7 @@ degradation experiments](hhttps://www.nature.com/articles/s41467-023-38458-w)
 - 集成多个模型提高预测稳定性
 - 域适应技术处理不同工作条件
 - 自动数据预处理和增强
-- 支持多种计算设备(CPU/GPU/MPS)
+- 支持多种计算设备(CPU/CUDA)
 
 ## 环境要求
 - Python 3.12
