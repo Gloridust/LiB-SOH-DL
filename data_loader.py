@@ -132,36 +132,25 @@ class BatteryDataLoader:
             # 对容量进行插值
             gridded_capacity = f(grid_points)
             
-            # 检查插值结果是否有效
-            if np.any(np.isnan(gridded_capacity)):
-                print("警告: 插值结果包含无效值")
-                return None
-            
             return gridded_capacity
             
         except Exception as e:
-            print(f"网格化处理出错: {str(e)}")
+            print(f"网格化处理时出错: {str(e)}")
             return None
     
-    def _normalize_curve(self, capacity_curve):
-        """归一化充电曲线"""
+    def _normalize_curve(self, curve):
+        """归一化处理曲线"""
         try:
-            # 确保数据类型为float
-            capacity_curve = np.array(capacity_curve, dtype=np.float32)
-            
-            # 按最大容量进行归一化
-            max_capacity = np.max(capacity_curve)
-            if max_capacity <= 0:
-                return np.zeros_like(capacity_curve)
-            return capacity_curve / max_capacity
-            
+            max_value = np.max(curve)
+            if max_value == 0:
+                return curve
+            return curve / max_value
         except Exception as e:
-            print(f"归一化处理出错: {str(e)}")
-            raise
+            print(f"归一化处理时出错: {str(e)}")
+            return curve
     
     def prepare_data(self, source_file, target_file):
-        """准备源域和目标域数据"""
-        # 加载数据
+        """准备数据"""
         source_data = self.load_excel_data(source_file)
         target_data = self.load_excel_data(target_file)
         
@@ -277,14 +266,23 @@ class BatteryDataset(Dataset):
             soh_labels: SOH标签 (仅源域需要)
             is_source: 是否为源域数据
         """
-        self.voltage_curves = torch.FloatTensor(voltage_curves).unsqueeze(1) # 添加一个通道维度
-        self.soh_labels = torch.FloatTensor(soh_labels).unsqueeze(1) if soh_labels is not None else None
+        # 确保数据是张量格式
+        if isinstance(voltage_curves, np.ndarray):
+            voltage_curves = torch.from_numpy(voltage_curves)
+        if isinstance(soh_labels, np.ndarray):
+            soh_labels = torch.from_numpy(soh_labels)
+            
+        self.voltage_curves = voltage_curves.float()
+        if len(self.voltage_curves.shape) == 2:
+            self.voltage_curves = self.voltage_curves.unsqueeze(1)
+            
+        self.soh_labels = soh_labels.float().unsqueeze(1) if soh_labels is not None else None
         self.is_source = is_source
         
     def __len__(self):
         return len(self.voltage_curves)
     
     def __getitem__(self, idx):
-        if self.is_source:
+        if self.is_source and self.soh_labels is not None:
             return self.voltage_curves[idx], self.soh_labels[idx]
         return self.voltage_curves[idx]

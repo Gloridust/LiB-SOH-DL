@@ -29,15 +29,13 @@ class Config:
     # 设备配置
     @staticmethod
     def get_device():
-        """获取可用的计算设备，按照 CUDA > MPS > CPU 的优先级"""
+        """获取可用的计算设备，按照 CUDA > CPU 的优先级"""
         import torch
         
         if torch.cuda.is_available():
             return 'cuda'
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return 'mps'
         else:
-            return 'cpu'
+            return 'cpu'  # 暂时不使用 MPS，因为它可能导致某些操作的兼容性问题
     
     DEVICE = get_device.__func__()  # 静态方法调用
     
@@ -49,3 +47,8 @@ class Config:
     
     # 可视化参数
     PLOT_INTERVAL = 100  # 每隔多少轮绘制一次训练曲线 
+    
+    # 检查点配置
+    CHECKPOINT_DIR = "checkpoints"
+    CHECKPOINT_INTERVAL = 100  # 每隔多少轮保存一次检查点
+    RESUME_TRAINING = True     # 是否从检查点恢复训练 

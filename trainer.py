@@ -13,6 +13,10 @@ class Trainer:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(exist_ok=True)
         
+        # 创建检查点目录
+        self.checkpoint_dir = Path(config.CHECKPOINT_DIR)
+        self.checkpoint_dir.mkdir(exist_ok=True)
+        
         # 设置日志
         self._setup_logging()
         
@@ -46,27 +50,70 @@ class Trainer:
         )
         self.logger = logging.getLogger(__name__)
         
-    def train_model(self, model, source_loader, target_loader, optimizer):
+    def save_checkpoint(self, model, optimizer, epoch, train_losses, val_losses, model_index):
+        """保存检查点"""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_losses': train_losses,
+            'val_losses': val_losses,
+        }
+        path = self.checkpoint_dir / f"checkpoint_model_{model_index}_epoch_{epoch}.pt"
+        torch.save(checkpoint, path)
+        self.logger.info(f"保存检查点到: {path}")
+        
+    def load_checkpoint(self, model, optimizer, model_index):
+        """加载最新的检查点"""
+        try:
+            checkpoints = list(self.checkpoint_dir.glob(f"checkpoint_model_{model_index}_*.pt"))
+            if not checkpoints:
+                self.logger.info(f"没有找到模型 {model_index} 的检查点，从头开始训练")
+                return model, 0, [], []
+            
+            latest_checkpoint = max(checkpoints, key=lambda x: int(str(x).split('_')[-1].split('.')[0]))
+            checkpoint = torch.load(latest_checkpoint)
+            
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            self.logger.info(f"成功加载检查点: {latest_checkpoint}")
+            return model, checkpoint['epoch'], checkpoint['train_losses'], checkpoint['val_losses']
+            
+        except Exception as e:
+            self.logger.warning(f"加载检查点时出错: {str(e)}，从头开始训练")
+            return model, 0, [], []
+    
+    def train_model(self, model, source_loader, target_loader, optimizer, model_index):
         """训练单个模型"""
         try:
             model = model.to(self.device)
+            start_epoch = 0
+            train_losses = []
+            val_losses = []
+            
+            # 如果配置了恢复训练，则尝试加载检查点
+            if self.config.RESUME_TRAINING:
+                model, start_epoch, train_losses, val_losses = self.load_checkpoint(
+                    model, optimizer, model_index
+                )
+                if start_epoch > 0:
+                    self.logger.info(f"从epoch {start_epoch} 恢复训练")
+            
             best_loss = float('inf')
             patience = self.config.PATIENCE
             patience_counter = 0
             
-            train_losses = []
-            val_losses = []
-            
-            for epoch in range(self.config.NUM_EPOCHS):
+            for epoch in range(start_epoch, self.config.NUM_EPOCHS):
                 model.train()
                 total_loss = 0
                 
                 for (source_data, source_labels), target_data in zip(source_loader, target_loader):
                     try:
-                        # 将数据移动到正确的设备上
-                        source_data = source_data.to(self.device)
-                        source_labels = source_labels.to(self.device)
-                        target_data = target_data.to(self.device)
+                        # 将数据移动到正确的设备上并确保数据类型
+                        source_data = source_data.to(self.device, dtype=torch.float32)
+                        source_labels = source_labels.to(self.device, dtype=torch.float32)
+                        target_data = target_data.to(self.device, dtype=torch.float32)
                         
                         optimizer.zero_grad()
                         
@@ -76,10 +123,7 @@ class Trainer:
                         
                         # 反向传播
                         loss.backward()
-                        
-                        # 添加梯度裁剪
                         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                        
                         optimizer.step()
                         
                         total_loss += loss.item()
@@ -109,6 +153,14 @@ class Trainer:
                     self.logger.info(f'Epoch [{epoch+1}/{self.config.NUM_EPOCHS}], '
                                    f'Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}')
                     
+                # 保存检查点
+                if (epoch + 1) % self.config.CHECKPOINT_INTERVAL == 0:
+                    self.save_checkpoint(
+                        model, optimizer, epoch + 1,
+                        train_losses, val_losses,
+                        model_index
+                    )
+                
             return train_losses, val_losses
             
         except Exception as e:
@@ -166,35 +218,67 @@ class Trainer:
         plt.close()
         
     def evaluate_model(self, model, test_loader):
-        """评估模型"""
+        """评估模型性能"""
         model.eval()
         predictions = []
         targets = []
         
         with torch.no_grad():
-            for data, target in test_loader:
-                data = data.to(self.device)
-                pred = model(data)
-                predictions.extend(pred.cpu().numpy())
-                targets.extend(target.cpu().numpy())
-                
-        predictions = np.array(predictions)
-        targets = np.array(targets)
+            for batch in test_loader:
+                try:
+                    target = None  # 初始化target变量
+                    # 处理不同的数据格式
+                    if isinstance(batch, tuple) and len(batch) == 2:
+                        data, target = batch
+                    else:
+                        data = batch
+                        if isinstance(data, tuple):
+                            data = data[0]
+                    
+                    # 确保数据是张量
+                    if isinstance(data, list):
+                        data = torch.tensor(data, dtype=torch.float32)
+                    if target is not None and isinstance(target, list):
+                        target = torch.tensor(target, dtype=torch.float32)
+                    
+                    # 移动到设备并确保数据类型
+                    data = data.to(self.device)
+                    if target is not None:
+                        target = target.to(self.device)
+                    
+                    # 预测
+                    pred = model(data)
+                    predictions.extend(pred.cpu().numpy())
+                    
+                    # 如果有目标值，添加到targets
+                    if target is not None:
+                        targets.extend(target.cpu().numpy())
+                        
+                except Exception as e:
+                    self.logger.error(f"评估时出错: {str(e)}")
+                    self.logger.error(f"数据类型: {type(data)}")
+                    self.logger.error(f"数据形状: {data.shape if hasattr(data, 'shape') else 'N/A'}")
+                    continue
         
-        # 计算评估指标
-        mse = np.mean((predictions - targets) ** 2)
-        mae = np.mean(np.abs(predictions - targets))
-        rmse = np.sqrt(mse)
+        # 如果没有收集到targets（目标域评估），返回None
+        if not targets:
+            return None
         
-        metrics = {
-            'MSE': float(mse),
-            'MAE': float(mae),
-            'RMSE': float(rmse)
-        }
-        
-        # 保存评估结果
-        results_path = self.model_dir / 'evaluation_results.json'
-        with open(results_path, 'w') as f:
-            json.dump(metrics, f, indent=4)
+        # 转换为numpy数组并计算指标
+        try:
+            predictions = np.array(predictions)
+            targets = np.array(targets)
             
-        return metrics 
+            # 计算评估指标
+            mse = np.mean((predictions - targets) ** 2)
+            mae = np.mean(np.abs(predictions - targets))
+            rmse = np.sqrt(mse)
+            
+            return {
+                'MSE': mse,
+                'MAE': mae,
+                'RMSE': rmse
+            }
+        except Exception as e:
+            self.logger.error(f"计算评估指标时出错: {str(e)}")
+            return None 

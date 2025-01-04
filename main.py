@@ -10,9 +10,9 @@ from visualizer import Visualizer
 
 # 定义深度神经网络模型
 class BatterySOHEstimator(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, device):
         super(BatterySOHEstimator, self).__init__()
-        
+        self.device = device
         self.input_size = input_size
         
         # 打印输入大小
@@ -22,8 +22,8 @@ class BatterySOHEstimator(nn.Module):
         def calc_conv_output_size(input_size, kernel_size=3, stride=1, padding=1):
             return (input_size + 2 * padding - kernel_size) // stride + 1
             
-        def calc_pool_output_size(input_size, kernel_size=2, stride=2, padding=0):
-            return (input_size + 2 * padding - (kernel_size - 1) - 1) // stride  + 1
+        def calc_pool_output_size(input_size, kernel_size=2, stride=2):
+            return input_size // stride
         
         # 第一层卷积+池化后的大小
         conv1_size = calc_conv_output_size(input_size)
@@ -64,11 +64,8 @@ class BatterySOHEstimator(nn.Module):
         
         # 计算展平后的特征维度
         with torch.no_grad():
-            # 创建一个批次的测试输入
-            x = torch.randn(2, 1, self.input_size)
-            # 通过特征提取器
+            x = torch.randn(2, 1, self.input_size, dtype=torch.float32)  # 明确指定数据类型
             x = self.feature_extractor(x)
-            # 计算特征大小
             self.feature_size = x.view(x.size(0), -1).size(1)
             print(f"展平后的特征大小: {self.feature_size}")
         
@@ -104,19 +101,14 @@ class BatterySOHEstimator(nn.Module):
     
     def forward(self, x, extract_features=False):
         try:
-            # 确保输入维度正确
+            # 确保输入维度和数据类型正确
             if len(x.shape) == 2:
-                x = x.unsqueeze(1)  # [batch_size, 1, sequence_length]
-            
-            # 打印输入形状（调试用）
-            # print(f"Input shape: {x.shape}")
+                x = x.unsqueeze(1)
+            x = x.to(dtype=torch.float32)  # 明确指定数据类型
             
             # 特征提取
             features = self.feature_extractor(x)
-            # print(f"After feature extractor: {features.shape}")
-            
             features = features.view(features.size(0), -1)
-            # print(f"After flatten: {features.shape}")
             
             # MFC层
             mfc_output = self.mfc(features)
@@ -131,7 +123,27 @@ class BatterySOHEstimator(nn.Module):
         except Exception as e:
             print(f"前向传播错误: {str(e)}")
             print(f"输入张量形状: {x.shape}")
+            print(f"输入张量类型: {x.dtype}")
+            print(f"输入张量设备: {x.device}")
             raise
+    
+    def predict(self, data=None):
+        """预测方法"""
+        self.eval()  # 设置为评估模式
+        with torch.no_grad():
+            if data is not None:
+                # 如果提供了数据，使用提供的数据进行预测
+                if not isinstance(data, torch.Tensor):
+                    data = torch.tensor(data, dtype=torch.float32)
+                if len(data.shape) == 2:
+                    data = data.unsqueeze(1)
+                data = data.to(self.device)
+                return self(data).cpu().numpy()
+            else:
+                # 如果没有提供数据，返回一个示例预测
+                # 这里仅用于可视化目的
+                x = torch.randn(1, 1, self.input_size, device=self.device)
+                return self(x).cpu().numpy()
 
 # MMD损失函数
 def mmd_loss(source_features, target_features):
@@ -168,7 +180,7 @@ def train_model(source_loader, target_loader, model, optimizer, num_epochs=2000)
             domain_loss = mmd_loss(source_features, target_features)
             
             # 总损失
-            loss = soh_loss + Config.DOMAIN_LOSS_WEIGHT * domain_loss
+            loss = soh_loss + 0.1 * domain_loss
             
             # 反向传播
             loss.backward()
@@ -212,13 +224,13 @@ class DataPreprocessor:
         return grid_points, gridded_current
 
 class EnsembleDNNs:
-    def __init__(self, input_size, num_models=5):
+    def __init__(self, input_size, num_models=5, device=None):
         """
         参数:
             input_size: 输入特征大小
             num_models: 集成的模型数量
         """
-        self.models = [BatterySOHEstimator(input_size) for _ in range(num_models)]
+        self.models = [BatterySOHEstimator(input_size, device) for _ in range(num_models)]
         self.optimizers = [
             optim.Adam(
                 model.parameters(), 
@@ -241,9 +253,8 @@ class EnsembleDNNs:
             model.eval()
             model_preds = []
             with torch.no_grad():
-                for data in validation_loader:
-                    if isinstance(data, tuple):
-                        data = data[0]
+                for batch in validation_loader:
+                    data = batch[0]
                     pred = model(data.float())
                     model_preds.extend(pred.cpu().numpy())
             predictions.append(model_preds)
@@ -319,8 +330,11 @@ def main():
     # 获取输入特征大小
     input_size = next(iter(source_loader))[0].shape[-1] # 从数据加载器中获取正确的输入大小
     
+    # 获取设备信息
+    device = torch.device(config.DEVICE)
+    
     # 创建模型集成
-    ensemble = EnsembleDNNs(input_size, num_models=config.NUM_MODELS)
+    ensemble = EnsembleDNNs(input_size, num_models=config.NUM_MODELS, device=device)
     
     # 初始化训练器和可视化器
     trainer = Trainer(config)
@@ -330,7 +344,11 @@ def main():
     for i, (model, optimizer) in enumerate(zip(ensemble.models, ensemble.optimizers)):
         print(f"\nTraining model {i+1}/{len(ensemble.models)}")
         train_losses, val_losses = trainer.train_model(
-            model, source_loader, target_loader, optimizer
+            model, 
+            source_loader, 
+            target_loader, 
+            optimizer,
+            model_index=i+1  # 添加模型索引
         )
         
         # 绘制训练历史
@@ -351,16 +369,43 @@ def main():
     
     # 评估模型
     for i, model in enumerate(selected_models):
-        metrics = trainer.evaluate_model(model, source_loader)
         print(f"\nModel {i+1} Performance:")
-        for metric_name, value in metrics.items():
-            print(f"{metric_name}: {value:.4f}")
+        # 源域评估
+        source_metrics = trainer.evaluate_model(model, source_loader)
+        if source_metrics:
+            print("Source Domain Performance:")
+            for metric_name, value in source_metrics.items():
+                print(f"{metric_name}: {value:.4f}")
+        
+        # 目标域评估
+        target_metrics = trainer.evaluate_model(model, target_loader)
+        if target_metrics:
+            print("Target Domain Performance:")
+            for metric_name, value in target_metrics.items():
+                print(f"{metric_name}: {value:.4f}")
             
-    # 可视化预测结果
+    # 创建可视化器
+    visualizer = Visualizer()
+    
+    # 训练完成后进行分析
+    visualizer.plot_ensemble_analysis(
+        ensemble.models,
+        input_size,
+        save_name="ensemble_analysis.png"
+    )
+    
+    # 绘制训练曲线
+    visualizer.plot_training_curves(
+        train_losses,
+        val_losses,
+        save_name="training_curves.png"
+    )
+    
+    # 绘制预测结果
     visualizer.plot_soh_prediction(
         data_dict['target']['soh'],
         predictions,
-        save_name="final_prediction.png"
+        save_name="soh_prediction.png"
     )
 
 if __name__ == "__main__":

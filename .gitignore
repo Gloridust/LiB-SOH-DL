@@ -48,3 +48,4 @@ logs/
 *.csv
 .DS_Store
 s41467-023-38458-w.pdf
+checkpoints/
