@@ -15,7 +15,7 @@ degradation experiments](hhttps://www.nature.com/articles/s41467-023-38458-w)
 - 支持多种计算设备(CPU/GPU/MPS)
 
 ## 环境要求
-- Python 3.8+
+- Python 3.12
 - PyTorch 1.8+
 - pandas
 - numpy
@@ -85,13 +85,9 @@ class Config:
 ```
 
 ### 2. 运行训练
-```bash
-# 方法1：使用Python直接运行
-python main.py
 
-# 方法2：使用shell脚本（推荐）
-chmod +x run.sh
-./run.sh
+```bash
+python main.py
 ```
 
 ### 3. 查看结果
@@ -99,7 +95,6 @@ chmod +x run.sh
 - 模型文件：`models/`
 - 训练曲线：`visualizations/training_history_*.png`
 - 预测结果：`visualizations/final_prediction.png`
-- 训练日志：`logs/training_*.log`
 
 ## 模型架构
 1. 特征提取器（1D-CNN）：
@@ -121,33 +116,6 @@ chmod +x run.sh
 - MAE（平均绝对误差）
 - RMSE（均方根误差）
 
-## 注意事项
-1. 确保数据文件格式正确
-2. 检查GPU内存是否充足
-3. 适当调整batch_size
-4. 观察训练日志及时发现问题
-
-## 故障排除
-1. 数据加载错误：
-   - 检查数据文件路径
-   - 确认Excel文件格式
-   - 验证电压列名格式
-
-2. 内存错误：
-   - 减小batch_size
-   - 减少模型数量
-   - 使用数据采样
-
-3. 训练不稳定：
-   - 调整学习率
-   - 增加早停耐心值
-   - 检查数据预处理
-
-## 贡献指南
-1. Fork 项目
-2. 创建特性分支
-3. 提交更改
-4. 发起 Pull Request
 
 ## 许可证
 MIT License
