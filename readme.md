@@ -1,8 +1,6 @@
 # LiB-SOH-DL: 锂离子电池SOH预测深度学习模型
 
-复现论文：[Deep learning to estimate lithium-ion
-battery state of health without additional
-degradation experiments](hhttps://www.nature.com/articles/s41467-023-38458-w)
+复现论文：[Deep learning to estimate lithium-ion battery state of health without additional degradation experiments](hhttps://www.nature.com/articles/s41467-023-38458-w)
 
 ## 项目简介
 本项目实现了一个基于深度学习的锂离子电池健康状态(State of Health, SOH)预测模型。该模型使用充电曲线数据进行训练，能够准确预测电池的剩余寿命。
