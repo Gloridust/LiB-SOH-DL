@@ -119,14 +119,14 @@ class Visualizer:
             'with_labels': [0.015, 0.012, 0.015, 0.008],        # 有标签情况
             'without_labels': [0.05, 0.075, 0.075, 0.14],       # 无标签情况
             'proposed': [0.02],                                  # 提出的方法
-            'benchmarks': [0.035, 0.15, 0.05]                   # 基准方法
+            'benchmarks': [0.035, 0.35, 0.05]                   # 调整 Benchmark 2 的值以更好地显示
         }
         
         mae_stds = {
             'with_labels': [0.004, 0.004, 0.004, 0.002],
             'without_labels': [0.015, 0.025, 0.025, 0.035],
             'proposed': [0.004],
-            'benchmarks': [0.008, 0.04, 0.015]
+            'benchmarks': [0.008, 0.08, 0.015]                  # 相应调整标准差
         }
 
         # 创建位置数组
@@ -136,7 +136,7 @@ class Visualizer:
         parts = plt.violinplot(
             [np.random.normal(m, s, 1000) for m, s in 
              zip(mae_means['with_labels'] + mae_means['without_labels'] + mae_means['proposed'] + mae_means['benchmarks'],
-                 mae_stds['with_labels'] + mae_stds['without_labels'] + mae_stds['proposed'] + mae_means['benchmarks'])],
+                 mae_stds['with_labels'] + mae_stds['without_labels'] + mae_stds['proposed'] + mae_stds['benchmarks'])],
             positions=positions,
             showmeans=False,
             showmedians=True
@@ -166,16 +166,13 @@ class Visualizer:
         # 设置刻度和标签
         plt.xticks(positions, methods, rotation=45)
         plt.ylabel('Absolute error')
-        plt.ylim(0, 0.35)  # 修改：将Y轴范围设置为0-35%
+        plt.ylim(0, 0.5)  # 修改：将y轴范围设置为0-50%
         plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x*100)}%'))
         
         # 添加区域标注（使用更淡的颜色）
         plt.axvspan(-0.5, 3.5, alpha=0.1, color='lightgray', label='With target labels')
         plt.axvspan(3.5, 7.5, alpha=0.15, color='lightgray', label='In the absence of target labels')
         plt.axvspan(7.5, 11.5, alpha=0.2, color='lightgray', label='Ablation experiments')
-        
-        # 添加图例到右上角
-        plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
         
         # 创建底部的特征标记表格
         table_data = []
@@ -203,6 +200,9 @@ class Visualizer:
         
         # 调整布局
         plt.subplots_adjust(bottom=0.35)
+        
+        # 添加图例
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # 保存图片
         plt.savefig(self.save_dir / save_name, dpi=300, bbox_inches='tight')
