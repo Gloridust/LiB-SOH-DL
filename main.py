@@ -385,6 +385,9 @@ def main():
     # 创建可视化器
     visualizer = Visualizer()
     
+    # 绘制方法对比图
+    visualizer.plot_method_comparison(save_name="method_comparison.png")
+    
     # 训练完成后进行分析
     visualizer.plot_ensemble_analysis(
         ensemble.models,
